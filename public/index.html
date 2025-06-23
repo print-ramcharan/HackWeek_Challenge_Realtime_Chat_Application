@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Chat</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <style>
+    body {
+      margin: 0;
+      background: #f3f0ff; 
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #chat-container {
+      width: 100%;
+      max-width: 800px;
+      height: 600px;
+      border-radius: 1rem;
+      overflow: hidden;
+      box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+      display: flex;
+    }
+    #userList {
+      background: #e5dbff;
+      width: 220px;
+      overflow-y: auto;
+      border-right: 2px solid #d0bfff;
+    }
+    #userList .user {
+      cursor: pointer;
+      padding: 12px 16px;
+      border-bottom: 1px solid #d0bfff;
+    }
+    #userList .user.active {
+      background-color: #d0bfff;
+      font-weight: bold;
+    }
+    #chatArea {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: white;
+    }
+    #chatlog {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      background: #faf8ff;
+    }
+    .message {
+      max-width: 70%;
+      padding: 0.6rem 1rem;
+      margin-bottom: 0.75rem;
+      border-radius: 1rem;
+      word-wrap: break-word;
+    }
+    .sent {
+      background-color: #e0bbff;
+      align-self: flex-end;
+    }
+    .received {
+      background-color: #f3f0ff;
+      align-self: flex-start;
+      border: 1px solid #d0bfff;
+    }
+    #chatForm {
+      padding: 0.75rem;
+      background: #e5dbff;
+    }
+    .user-badge {
+    background-color: #9d4edd;
+    color: white;
+    border-radius: 50%;
+    font-size: 12px;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    line-height: 20px;
+    text-align: center;
+    margin-left: auto;
+    }
+
+    .user-wrapper {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    }
+
+  </style>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</head>
+<body>
+
+<!-- Using bootsrap for simplicity -->
+<div class="modal fade" id="usernameModal" tabindex="-1" aria-labelledby="usernameModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <form id="usernameForm">
+        <div class="modal-header">
+          <h5 class="modal-title">Enter your username</h5>
+        </div>
+        <div class="modal-body">
+          <input id="usernameInput" type="text" class="form-control" placeholder="e.g. ram123" required />
+        </div>
+        <div class="modal-footer">
+          <button type="submit" class="btn btn-violet btn-primary">Join Chat</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Chat Box Container -->
+<div id="chat-container">
+  <div id="userList" class="d-none d-md-block"></div>
+  <div id="chatArea">
+    <div id="chatlog"></div>
+    <form id="chatForm" class="d-flex gap-2 px-3" autocomplete="off">
+      <input id="chatInput" type="text" class="form-control" placeholder="Type a message..." />
+      <button class="btn btn-primary">Send</button>
+    </form>
+  </div>
+</div>
+
+<script>
+    const socket = io();
+    const chatLog = document.getElementById('chatlog');// the place to display the messages.
+    const chatForm = document.getElementById('chatForm');// the send text box
+    const chatInput = document.getElementById('chatInput');// the input text box inside the form.
+    const userList = document.getElementById('userList');//left side pannel
+  
+    let selfUsername = '';
+    let currentRecipient = '';
+    const unreadCounts = new Map();
+    let latestUserList = [];
+  
+    chatInput.disabled = true;
+    chatForm.querySelector('button').disabled = true;
+  
+    const modal = new bootstrap.Modal(document.getElementById('usernameModal'));
+    modal.show();
+    // ok so this logic registers the user to uniquely identify later in chat/ socket.
+    document.getElementById('usernameForm').addEventListener('submit', e => {
+      e.preventDefault();
+      const name = document.getElementById('usernameInput').value.trim();
+      if (!name) return;
+  
+      selfUsername = name;
+      socket.emit('register', name);
+      modal.hide();
+    });
+    // this does the sending message operation from sender to receiver. 
+    chatForm.addEventListener('submit', e => {
+      e.preventDefault();
+      const msg = chatInput.value.trim();
+      if (!msg || !currentRecipient) return;
+  
+      socket.emit('private message', {
+        text: msg,
+        to: currentRecipient,
+        from: selfUsername
+      });
+  
+      chatInput.value = '';
+    });
+    // fetchign the history messaes here. this is a socket event
+    socket.on('history', history => {
+      chatLog.innerHTML = '';
+      history.forEach(({ text, from, to }) => {
+        if ((from === selfUsername && to === currentRecipient) ||
+            (to === selfUsername && from === currentRecipient)) {
+          const isSent = from === selfUsername;
+          const msgDiv = document.createElement('div');
+          msgDiv.className = 'message ' + (isSent ? 'sent' : 'received');
+          msgDiv.textContent = (isSent ? 'You: ' : `${from}: `) + text;
+          chatLog.appendChild(msgDiv);
+        }
+      });
+      chatLog.scrollTop = chatLog.scrollHeight;
+    });
+    // when a user sends a event to server. the server sends / boradcast to everyone in the channel that messae witht this private message topci.
+    // and has some extra parameters to limit sending to all the users. and sent to only requred users.
+    socket.on('private message', ({ text, from, to }) => {
+      const isSent = from === selfUsername;
+      const otherUser = isSent ? to : from;
+  
+      if (otherUser !== currentRecipient) {
+        if (!isSent) {
+          unreadCounts.set(otherUser, (unreadCounts.get(otherUser) || 0) + 1);
+          renderUsers(latestUserList);
+        }
+        return;
+      }
+  
+      const msgDiv = document.createElement('div');
+      msgDiv.className = 'message ' + (isSent ? 'sent' : 'received');
+      msgDiv.textContent = (isSent ? 'You: ' : `${from}: `) + text;
+      chatLog.appendChild(msgDiv);
+      chatLog.scrollTop = chatLog.scrollHeight;
+    });
+  
+    // if a user registers while existing usrs are already there this will update that list of users. this is a socket event. 
+    socket.on('users', users => {
+      latestUserList = users;
+      renderUsers(users);
+    });
+  
+    // on getting the users event from socket we are making a reload of users.
+    function renderUsers(userListData = []) {
+      userList.innerHTML = '';
+      const others = userListData.filter(u => u !== selfUsername);
+  
+      if (others.length === 0) {
+        const placeholder = document.createElement('div');
+        placeholder.className = 'text-muted p-3 small';
+        placeholder.textContent = 'No users online. Open this page in another tab to start chatting!';
+        userList.appendChild(placeholder);
+        return;
+      }
+  
+      others.forEach(username => {
+        const userDiv = document.createElement('div');
+        userDiv.className = 'user';
+  
+        const wrapper = document.createElement('div');
+        wrapper.className = 'user-wrapper';
+  
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = username;
+        wrapper.appendChild(nameSpan);
+  
+        const unread = unreadCounts.get(username);
+        if (unread > 0) {
+          const badge = document.createElement('div');
+          badge.className = 'user-badge';
+          badge.textContent = unread;
+          wrapper.appendChild(badge);
+        }
+  
+        userDiv.appendChild(wrapper);
+  
+        userDiv.onclick = () => {
+          currentRecipient = username;
+  
+          document.querySelectorAll('.user').forEach(el => el.classList.remove('active'));
+          userDiv.classList.add('active');
+  
+          chatInput.disabled = false;
+          chatForm.querySelector('button').disabled = false;
+  
+          unreadCounts.set(username, 0);
+          renderUsers(userListData); 
+  
+          socket.emit('get history', {
+            self: selfUsername,
+            with: currentRecipient
+          });
+        };
+  
+        if (username === currentRecipient) {
+          userDiv.classList.add('active');
+        }
+        userList.appendChild(userDiv);
+      });
+    }
+  </script>
+  
+</body>
+</html>
